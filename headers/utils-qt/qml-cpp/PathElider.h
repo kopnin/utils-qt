@@ -7,7 +7,7 @@
 #include <vector>
 #include <utils-cpp/pimpl.h>
 
-class QStringList;
+//class QStringList;
 class QRegularExpression;
 
 struct PathEliderDecomposition

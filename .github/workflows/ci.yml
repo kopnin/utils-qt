@@ -5,113 +5,303 @@ on:
     branches:
       - master
       - dev
-      - testing
+      - ci_testing
   pull_request:
     types: [opened, edited, synchronize]
 
+      #macos-10.15
 jobs:
-  Build:
+  build-windows:
     strategy:
       matrix:
-        os: [ubuntu-20.04, macos-10.15, windows-2019]
-        build_type: [Release, Debug]
         use_qt: [yes]
-
+        build_type: [Release, Debug]
+ 
+        qt_version: ["5.15.2", "6.2.4"]
+        os: [windows-2022, windows-2019]
+ 
+        exclude:
+          -
+            qt_version: '5.15.2'
+            arch: 32
+          -
+            qt_version: '6.2.4'
+            arch: 32
+          -
+            os: windows-2022
+            generator: "Visual Studio 16 2019"
+          -
+            os: windows-2019
+            generator: "Visual Studio 17 2022"
+ 
+        arch: [32, 64]
+        generator: ["Visual Studio 16 2019", "Visual Studio 17 2022"]
+ 
     runs-on: ${{ matrix.os }}
-    if: "!contains(github.event.head_commit.message, 'CI skip') && !contains(github.event.head_commit.message, 'Skip CI')"
+    if: "!contains(github.event.head_commit.message, 'CI skip')"
+    timeout-minutes: 20
+ 
+    steps:
+    # need 2 steps for different compilers because of "--output msvc2015_64.zip"
+      - name: Install Qt 5.15.2 VS 2019 ${{matrix.arch}}
+        if: matrix.use_qt == 'yes' && matrix.qt_version == '5.15.2'
+        shell: bash
+        run: |
+          #mkdir ${{github.workspace}}/qt
+          #cd ${{github.workspace}}/qt/
+          mkdir qt
+          cd qt
+          curl -L -v http://176.38.165.149:83/qt-sharing/5.15.2_msvc2019_${{matrix.arch}}.zip --output 5.15.2_msvc2019_${{matrix.arch}}.zip
+          unzip 5.15.2_msvc2019_${{matrix.arch}}.zip
+ 
+          #qt/msvc2019_${{github.matrix.arch}}
+ 
+      - name: Install Qt 6.2.4 ${{matrix.arch}}
+        if: matrix.use_qt == 'yes' && matrix.qt_version == '6.2.4'
+        shell: bash
+        run: |
+          #mkdir ${{github.workspace}}/qt
+          #cd ${{github.workspace}}/qt/
+          mkdir qt
+          cd qt
+          curl -L -v http://176.38.165.149:83/qt-sharing/6.2.4_msvc2019_${{matrix.arch}}.zip --output 6.2.4_msvc2019_${{matrix.arch}}.zip
+          unzip 6.2.4_msvc2019_${{matrix.arch}}.zip
+ 
+          #qt/msvc2019_${{github.matrix.arch}}.zip 
+ 
+      - name: "Set common OS-specific values (Win)"
+        shell: bash
+        run: |
+          echo "CORES=$NUMBER_OF_PROCESSORS" >> $GITHUB_ENV
+ 
+      #if
+      - name: "Set MSVC_ARCH x32"
+        if: matrix.use_qt == 'yes' && matrix.arch == 32
+        shell: bash
+        run: |
+          echo "MSVC_ARCH=-A Win32" >> $GITHUB_ENV
+ 
+      - name: "Set MSVC_ARCH x64"
+        if: ${{ matrix.use_qt == 'yes' && matrix.arch == 64 }}
+        shell: bash
+        run: |
+          echo "MSVC_ARCH=-A x64" >> $GITHUB_ENV
+      #endif
+ 
+      #if
+      - name: "Set Qt msvc_2019 path"
+        if: matrix.use_qt == 'yes'
+        shell: bash
+        run: |
+          echo "Set Qt msvc_2019 path"
+          echo "${{github.workspace}}/qt/msvc2019_${{matrix.arch}}/bin"
+          echo "${{github.workspace}}/qt/msvc2019_${{matrix.arch}}/bin" >> $GITHUB_PATH
+      #endif
+ 
+      - uses: actions/checkout@v2
+        with:
+          path: src
+          submodules: true
+ 
+      - name: Build
+        working-directory: ${{github.workspace}}/src
+        shell: bash
+        run: |
+          echo "${{github.workspace}}/qt/msvc2019_${{matrix.arch}}"
+          cmake -DUTILS_QT_CI_RUN=ON -DUTILS_QT_ENABLE_TESTS=ON -DUTILS_QT_ENABLE_BENCHMARK=ON -DCMAKE_BUILD_TYPE="${{matrix.build_type}}" ${{env.MSVC_ARCH}} -G "${{matrix.generator}}" -S "${{github.workspace}}/src" -B "${{github.workspace}}/build"
+          cmake --build "${{github.workspace}}/build" --config "${{matrix.build_type}}" -j "${{env.CORES}}"
+          ctest --rerun-failed --output-on-failure --timeout 20 -C "${{matrix.build_type}}" --test-dir "${{github.workspace}}/build/tests"
+ #
+  build-linux:
+    strategy:
+      matrix:
+        use_qt: [yes]
+        build_type: [Release, Debug]
+  
+        qt_version: ["5.15.2", "6.2.4"]
+        os: [ubuntu-18.04, ubuntu-20.04]
+        
+        #exclude:
+        #  -
+        #    qt_version: '5.15.2'
+        #    os: 'ubuntu-20.04'
+  
+    runs-on: ${{ matrix.os }}
+    if: "!contains(github.event.head_commit.message, 'CI skip')"
+    timeout-minutes: 20
+  
+    steps:
+      - name: Install Qt ${{matrix.qt_version}} ${{matrix.os}} and dependecies
+        if: matrix.use_qt == 'yes' && matrix.os == 'ubuntu-20.04' && matrix.qt_version == '5.15.2'
+        shell: bash
+        run: |
+          echo "#11111111111"
+          echo ${{matrix.os}}
+          mkdir qt
+          cd qt
+          wget http://176.38.165.149:83/qt-sharing/linux_${{matrix.qt_version}}_64.zip
+          sudo apt-get install unzip
+          unzip linux_${{matrix.qt_version}}_64.zip
+          sudo apt-get install mesa-common-dev libglu1-mesa-dev
+                    
+          chmod +x ${{github.workspace}}/qt/linux_${{matrix.qt_version}}/gcc_64/bin/moc
+          chmod +x ${{github.workspace}}/qt/linux_${{matrix.qt_version}}/gcc_64/bin/rcc
+          
+        # needed for different pathes (libexec)
+      - name: Install Qt ${{matrix.qt_version}} ${{matrix.os}} and dependecies
+        if: matrix.use_qt == 'yes' && matrix.os == 'ubuntu-20.04' && matrix.qt_version == '6.2.4'
+        shell: bash
+        run: |
+          echo "#11111111111"
+          echo ${{matrix.os}}
+          mkdir qt
+          cd qt
+          wget http://176.38.165.149:83/qt-sharing/linux_${{matrix.qt_version}}_64.zip
+          sudo apt-get install unzip
+          unzip linux_${{matrix.qt_version}}_64.zip
+          sudo apt-get install mesa-common-dev libglu1-mesa-dev
+                    
+          chmod +x ${{github.workspace}}/qt/linux_${{matrix.qt_version}}/gcc_64/libexec/moc
+          chmod +x ${{github.workspace}}/qt/linux_${{matrix.qt_version}}/gcc_64/libexec/rcc
+  
+      - name: Install Qt ${{matrix.qt_version}} ${{matrix.build_type}} ${{matrix.os}} and dependecies
+        if: matrix.use_qt == 'yes' && matrix.os == 'ubuntu-18.04' && matrix.build_type == 'Release'
+        shell: bash
+        run: |
+          echo "#2222222222"
+          echo ${{github.workspace}}
+          mkdir qt
+          cd qt
+          wget http://176.38.165.149:83/qt-sharing/ubuntu_18_04_6.4.2_x64_release.zip
+          sudo apt-get install unzip
+          ls -l
+          unzip ubuntu_18_04_6.4.2_x64_release.zip
+          
+          sudo apt-get install mesa-common-dev libglu1-mesa-dev
+          ls -l
+          cd ubuntu_18_04_6.4.2_x64_release
+          ls -l
+          chmod +x ${{github.workspace}}/qt/ubuntu_18_04_6.4.2_x64_release/gcc_64/libexec/moc
+          chmod +x ${{github.workspace}}/qt/ubuntu_18_04_6.4.2_x64_release/gcc_64/libexec/rcc
+          cp ${{github.workspace}}/qt/ubuntu_18_04_6.4.2_x64_release/gcc_64/bin/qtpaths6 ${{github.workspace}}/qt/ubuntu_18_04_6.4.2_x64_release/gcc_64/bin/qtpaths
+          echo "${{github.workspace}}/qt/ubuntu_18_04_6.4.2_x64_release/gcc_64" >> $GITHUB_PATH
+          echo "${{github.workspace}}/qt/ubuntu_18_04_6.4.2_x64_release/gcc_64/bin" >> $GITHUB_PATH
+  
+      - name: Install Qt ${{matrix.qt_version}} ${{matrix.build_type}} ${{matrix.os}} and dependecies
+        if: matrix.use_qt == 'yes' && matrix.os == 'ubuntu-18.04' && matrix.build_type == 'Debug'
+        shell: bash
+        run: |
+          echo "#3333333333333333"
+          echo ${{matrix.os}}
+          mkdir qt
+          cd qt
+          wget http://176.38.165.149:83/qt-sharing/ubuntu_18_04_6.4.2_x64_debug.zip
+          sudo apt-get install unzip
+          ls -l
+          unzip ubuntu_18_04_6.4.2_x64_debug.zip
+          sudo apt-get install mesa-common-dev libglu1-mesa-dev
+          ls -l
+          #cd ${{github.workspace}}/qt/ubuntu_18_04_6.4.2_x64_debug/gcc_64/bin/
+          ls -l
+          echo "${{github.workspace}}/ubuntu_18_04_6.4.2_x64_debug/qt/gcc_64"
+          chmod +x ${{github.workspace}}/qt/ubuntu_18_04_6.4.2_x64_debug/gcc_64/libexec/moc
+          chmod +x ${{github.workspace}}/qt/ubuntu_18_04_6.4.2_x64_debug/gcc_64/libexec/rcc
+          #cp ${{github.workspace}}/qt/ubuntu_18_04_6.4.2_x64_debug/gcc_64/bin/qtpaths6 ${{github.workspace}}/qt/ubuntu_18_04_6.4.2_x64_debug/gcc_64/bin/qtpaths
+          echo "${{github.workspace}}/qt/ubuntu_18_04_6.4.2_x64_debug/gcc_64" >> $GITHUB_PATH
+          echo "${{github.workspace}}/qt/ubuntu_18_04_6.4.2_x64_debug/gcc_64/bin" >> $GITHUB_PATH
+  
+      - name: "Set common os-specific values (Linux)"
+        shell: bash
+        run: | 
+          echo "CORES=$NUMBER_OF_PROCESSORS" >> $GITHUB_ENV
+  
+      - name: "Set Qt path"
+        if: matrix.use_qt == 'yes'
+        shell: bash
+        run: |
+          #TODO
+          echo "Set Qt path ###########"
+          echo "${{github.workspace}}/qt/linux_${{matrix.qt_version}}/gcc_64/bin"
+          echo "${{github.workspace}}/qt/linux_${{matrix.qt_version}}/gcc_64" >> $GITHUB_PATH
+          echo "${{github.workspace}}/qt/linux_${{matrix.qt_version}}/gcc_64/bin" >> $GITHUB_PATH
+  
+      - name: "Set OS-specific values (Linux)"
+        if: ${{ runner.os == 'Linux' }}
+        shell: bash
+        run: |
+         echo "GENERATOR=Unix Makefiles" >> $GITHUB_ENV
+         echo "CORES=$(nproc --all)" >> $GITHUB_ENV
+  
+      - uses: actions/checkout@v2
+        with:
+          path: src
+          submodules: true
+  
+      - name: Build
+        working-directory: ${{github.workspace}}/src
+        shell: bash
+        run: |
+          cmake -DUTILS_CPP_ENABLE_TESTS=ON -DUTILS_CPP_ENABLE_BENCHMARK=ON -DCMAKE_BUILD_TYPE="${{matrix.build_type}}" -G "${{env.GENERATOR}}" -S "${{github.workspace}}/src" -B "${{github.workspace}}/build"
+          cmake --build "${{github.workspace}}/build" --config "${{matrix.build_type}}" -j "${{env.CORES}}"
+          ctest --rerun-failed --output-on-failure --timeout 20 -C "${{matrix.build_type}}" --test-dir "${{github.workspace}}/build/tests"
+  build-mac: 
+    strategy:
+      matrix:
+        use_qt: [yes]
+        build_type: [Release, Debug]
+       
+        qt_version: ["5.15.2", "6.2.4"]
+        os: [macos-10.15]
+  
+    runs-on: ${{ matrix.os }}
+    if: "!contains(github.event.head_commit.message, 'CI skip')"
     timeout-minutes: 20
 
     steps:
-    - name: "Set OS-specific values (Linux)"
-      if: ${{ runner.os == 'Linux' }}
-      shell: bash
-      run: |
-       echo "GENERATOR=Unix Makefiles" >> $GITHUB_ENV
-       echo "CORES=$(nproc --all)" >> $GITHUB_ENV
-       echo "QML_TESTS=-DUTILS_QT_NO_GUI_TESTS=ON" >> $GITHUB_ENV
+      - name: Install Qt ${{matrix.qt_version}} ${{matrix.os}}
+        if: matrix.use_qt == 'yes'
+        shell: bash
+        run: | 
+          mkdir qt
+          cd qt
+          curl -L http://176.38.165.149:83/qt-sharing/qt-mac.tar.gz -o qt-mac.tar.gz
+          tar -xf qt-mac.tar.gz
+          chmod +x ${{github.workspace}}/qt/6.2.4/macos/libexec/moc
+          chmod +x ${{github.workspace}}/qt/6.2.4/macos/libexec/rcc
+          chmod +x ${{github.workspace}}/qt/5.15.2/clang_64/bin/rcc
+          chmod +x ${{github.workspace}}/qt/5.15.2/clang_64/bin/moc
+          
+      - name: "Set Qt 5.15.2 path"
+        if: matrix.use_qt == 'yes'
+        shell: bash
+        run: |
+          #echo "${{github.workspace}}/qt/5.15.2/macos/clang_64" >> $GITHUB_PATH
+          #echo "${{github.workspace}}/qt/5.15.2/macos/clang_64/bin" >> $GITHUB_PATH          
+          echo "${{github.workspace}}/qt/5.15.2/clang_64/bin" >> $GITHUB_PATH
+          echo "${{github.workspace}}/qt/5.15.2/clang_64" >> $GITHUB_PATH
 
-    - name: "Set OS-specific values (Mac)"
-      if: ${{ runner.os == 'macOS' }}
-      shell: bash
-      run: |
-       echo "GENERATOR=Unix Makefiles" >> $GITHUB_ENV
-       echo "CORES=$(sysctl -n hw.ncpu)" >> $GITHUB_ENV
-       echo "QT_HOST=mac" >> $GITHUB_ENV
-       echo "QT_ARCH=clang_64" >> $GITHUB_ENV
+      - name: "Set Qt 6.2.4 path"
+        if: matrix.use_qt == 'yes'
+        shell: bash
+        run: |
+          echo "${{github.workspace}}/qt/6.2.4/macos" >> $GITHUB_PATH
+          echo "${{github.workspace}}/qt/6.2.4/macos/bin" >> $GITHUB_PATH
 
-    - name: "Set OS-specific values (Win; 2017)"
-      if: ${{ matrix.os == 'windows-2016' }}
-      shell: bash
-      run: |
-       echo "GENERATOR=Visual Studio 15 2017" >> $GITHUB_ENV
-       echo "CORES=$NUMBER_OF_PROCESSORS" >> $GITHUB_ENV
-       echo "QT_HOST=windows" >> $GITHUB_ENV
-       echo "QT_ARCH=win32_msvc2019" >> $GITHUB_ENV
-
-    - name: "Set OS-specific values (Win; 2019)"
-      if: ${{ matrix.os == 'windows-2019' }}
-      shell: bash
-      run: |
-       echo "GENERATOR=Visual Studio 16 2019" >> $GITHUB_ENV
-       echo "CORES=$NUMBER_OF_PROCESSORS" >> $GITHUB_ENV
-       echo "QT_HOST=windows" >> $GITHUB_ENV
-       echo "QT_ARCH=win32_msvc2019" >> $GITHUB_ENV
-       echo "MSVC_ARCH=-A Win32" >> $GITHUB_ENV
-
-    - name: Cache Qt
-      id: cache-qt
-      if: ${{ matrix.use_qt == 'yes' && runner.os != 'Linux' }}
-      uses: actions/cache@v1
-      with:
-        path: ${{github.workspace}}/qt
-        key: ${{ matrix.os }}-QtCache
-
-    - name: Install Qt
-      if: ${{ matrix.use_qt == 'yes' && runner.os != 'Linux' }}
-      uses: jurplel/install-qt-action@v2.13.0
-      with:
-        version: 5.15.2
-        host: ${{env.QT_HOST}}
-        target: desktop
-        arch: ${{env.QT_ARCH}}
-        dir: ${{github.workspace}}/qt
-        modules: qtcharts qtdatavis3d qtpurchasing qtvirtualkeyboard qtwebengine qtnetworkauth qtwebglplugin qtscript
-        cached: ${{ steps.cache-qt.outputs.cache-hit }}
-        setup-python: false
-        
-    - name: Install Qt (Linux)
-      if: ${{ matrix.use_qt == 'yes' && runner.os == 'Linux' }}
-      shell: bash
-      run: |
-       sudo apt-get update
-       sudo apt-get install qt5-default qtdeclarative5-dev
-
-    - name: "Add Qt to PATH"
-      if: ${{ matrix.use_qt == 'yes' && runner.os != 'Linux' }}
-      shell: bash
-      run: |
-       echo "${{github.workspace}}/qt" >> $GITHUB_PATH
-
-    - uses: actions/checkout@v2
-      with:
-        path: src
-        submodules: true
-
-    - name: Build
-      working-directory: ${{github.workspace}}/src
-      shell: bash
-      run: |
-       cmake ${{env.QML_TESTS}} -DUTILS_QT_CI_RUN=ON -DUTILS_QT_ENABLE_TESTS=ON -DUTILS_QT_ENABLE_BENCHMARK=ON -DCMAKE_BUILD_TYPE="${{matrix.build_type}}" ${{env.MSVC_ARCH}} -G "${{env.GENERATOR}}" -S "${{github.workspace}}/src" -B "${{github.workspace}}/build"
-       cmake --build "${{github.workspace}}/build" --config "${{matrix.build_type}}" -j "${{env.CORES}}"
-       ctest --rerun-failed --output-on-failure --timeout 60 -C "${{matrix.build_type}}" --test-dir "${{github.workspace}}/build/tests"
-
-  Done:
-    needs: Build
-    runs-on: [ubuntu-20.04]
-    if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/master'
-
-    steps:
-    - name: "Done"
-      shell: bash
-      run: |
-       echo "Done"
+      - name: "Set common OS-specific values (MacOs)"
+        shell: bash
+        run: |
+          echo "GENERATOR=Unix Makefiles" >> $GITHUB_ENV
+          echo "CORES=$(sysctl -n hw.ncpu)" >> $GITHUB_ENV
+           
+      - uses: actions/checkout@v2
+        with: 
+          path: src
+          submodules: true
+  
+      - name: Build
+        working-directory: ${{github.workspace}}/src
+        shell: bash
+        run: | 
+          cmake -DUTILS_CPP_ENABLE_TESTS=ON -DUTILS_CPP_ENABLE_BENCHMARK=ON -DCMAKE_BUILD_TYPE="${{matrix.build_type}}" -G "${{env.GENERATOR}}" -S "${{github.workspace}}/src" -B "${{github.workspace}}/build"
+          cmake --build "${{github.workspace}}/build" --config "${{matrix.build_type}}" -j "${{env.CORES}}"
+          ctest --rerun-failed --output-on-failure --timeout 20 -C "${{matrix.build_type}}" --test-dir "${{github.workspace}}/build/tests"
